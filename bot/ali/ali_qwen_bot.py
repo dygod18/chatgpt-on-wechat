@@ -129,7 +129,7 @@ class AliQwenBot(Bot):
             
             # NOTE 阿里百炼的call()函数未提供temperature参数，考虑到temperature和top_p参数作用相同，取两者较小的值作为top_p参数传入，详情见文档 https://help.aliyun.com/document_detail/2587502.htm
             # response = broadscope_bailian.Completions().call(app_id=self.app_id(), prompt=prompt, history=history, top_p=min(self.temperature(), self.top_p()))
-            response = Generation.call(Generation.Models.qwen_max, messages=messages, result_format='message', api_key='sk-175149c329ea434bbf631d86f7ea62fc')
+            response = Generation.call(Generation.Models.qwen_max, messages=messages, result_format='message')
             # completion_content = self.get_completion_content(response, self.node_id())
             completion_content = ''
             if response.status_code == HTTPStatus.OK:
