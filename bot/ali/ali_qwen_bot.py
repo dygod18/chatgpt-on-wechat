@@ -21,6 +21,11 @@ from common.log import logger
 from common import const
 from config import conf, load_config
 
+from http import HTTPStatus
+from urllib.parse import urlparse, unquote
+from pathlib import PurePosixPath
+import requests
+
 class AliQwenBot(Bot):
     def __init__(self):
         super().__init__()
