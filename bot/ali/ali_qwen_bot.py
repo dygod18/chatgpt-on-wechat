@@ -5,9 +5,12 @@ import time
 from typing import List, Tuple
 
 import openai
-import openai.error
 import broadscope_bailian
 from broadscope_bailian import ChatQaMessage
+from http import HTTPStatus
+import dashscope
+from dashscope import Generation
+from dashscope.api_entities.dashscope_response import Role
 
 from bot.bot import Bot
 from bot.ali.ali_qwen_session import AliQwenSession
@@ -51,8 +54,7 @@ class AliQwenBot(Bot):
     def reply(self, query, context=None):
         # acquire reply content
         if context.type == ContextType.TEXT:
-            logger.info("[QWEN] query={}".format(query))
-
+            logger.info("[QWEN] query={}".format(query))        
             session_id = context["session_id"]
             reply = None
             clear_memory_commands = conf().get("clear_memory_commands", ["#清除记忆"])
@@ -101,11 +103,36 @@ class AliQwenBot(Bot):
         :return: {}
         """
         try:
-            prompt, history = self.convert_messages_format(session.messages)
+             # prompt, history = self.convert_messages_format(session.messages)
+            user_content = ''
+            messages = []
+            system_content = ''
+            print(session.messages)
+            for message in session.messages:
+                role = message.get('role')
+                if role == 'user':
+                    user_content = message.get('content')
+                    messages.append({'role': Role.USER, 'content': user_content})
+                elif role == 'assistant':
+                    assistant_content = message.get('content')
+                    messages.append({'role': 'assistant', 'content': user_content})
+                elif role =='system':
+                    system_content += message.get('content')
+                    messages.append({'role': Role.SYSTEM, 'content': system_content})
+
             self.update_api_key_if_expired()
+            
             # NOTE 阿里百炼的call()函数未提供temperature参数，考虑到temperature和top_p参数作用相同，取两者较小的值作为top_p参数传入，详情见文档 https://help.aliyun.com/document_detail/2587502.htm
-            response = broadscope_bailian.Completions().call(app_id=self.app_id(), prompt=prompt, history=history, top_p=min(self.temperature(), self.top_p()))
-            completion_content = self.get_completion_content(response, self.node_id())
+            # response = broadscope_bailian.Completions().call(app_id=self.app_id(), prompt=prompt, history=history, top_p=min(self.temperature(), self.top_p()))
+            response = Generation.call(Generation.Models.qwen_max, messages=messages, result_format='message', api_key='sk-175149c329ea434bbf631d86f7ea62fc')
+            # completion_content = self.get_completion_content(response, self.node_id())
+            completion_content = ''
+            if response.status_code == HTTPStatus.OK:
+                print(response)
+                role = response.output.choices[0]['message']['role']
+                completion_content = response.output.choices[0]['message']['content']
+            else:
+                print(response)
             completion_tokens, total_tokens = self.calc_tokens(session.messages, completion_content)
             return {
                 "total_tokens": total_tokens,
@@ -115,22 +142,22 @@ class AliQwenBot(Bot):
         except Exception as e:
             need_retry = retry_count < 2
             result = {"completion_tokens": 0, "content": "我现在有点累了，等会再来吧"}
-            if isinstance(e, openai.error.RateLimitError):
+            if isinstance(e, openai.RateLimitError):
                 logger.warn("[QWEN] RateLimitError: {}".format(e))
                 result["content"] = "提问太快啦，请休息一下再问我吧"
                 if need_retry:
                     time.sleep(20)
-            elif isinstance(e, openai.error.Timeout):
+            elif isinstance(e, openai.Timeout):
                 logger.warn("[QWEN] Timeout: {}".format(e))
                 result["content"] = "我没有收到你的消息"
                 if need_retry:
                     time.sleep(5)
-            elif isinstance(e, openai.error.APIError):
+            elif isinstance(e, openai.APIError):
                 logger.warn("[QWEN] Bad Gateway: {}".format(e))
                 result["content"] = "请再问我一次"
                 if need_retry:
                     time.sleep(10)
-            elif isinstance(e, openai.error.APIConnectionError):
+            elif isinstance(e, openai.APIConnectionError):
                 logger.warn("[QWEN] APIConnectionError: {}".format(e))
                 need_retry = False
                 result["content"] = "我连接不到你的网络"
@@ -146,8 +173,10 @@ class AliQwenBot(Bot):
                 return result
 
     def set_api_key(self):
-        api_key, expired_time = self.api_key_client().create_token(agent_key=self.agent_key())
-        broadscope_bailian.api_key = api_key
+        # api_key, expired_time = self.api_key_client().create_token(agent_key=self.agent_key())
+        # broadscope_bailian.api_key = api_key
+        dashscope.api_key=self.agent_key
+        expired_time = time.time() + 100000000
         return expired_time
 
     def update_api_key_if_expired(self):
@@ -212,3 +241,20 @@ class AliQwenBot(Bot):
         for message in messages:
             prompt_tokens += len(message["content"])
         return completion_tokens, prompt_tokens + completion_tokens
+
+    def image_synthesis(prompt):
+        rsp = dashscope.ImageSynthesis.call(model=dashscope.ImageSynthesis.Models.wanx_v1,
+                              prompt=prompt,
+                              n=1,
+                              size='1024*1024')
+        if rsp.status_code == HTTPStatus.OK:
+            print(rsp.output)
+            print(rsp.usage)
+            # save file to current directory
+            for result in rsp.output.results:
+                file_name = PurePosixPath(unquote(urlparse(result.url).path)).parts[-1]
+                with open('./%s' % file_name, 'wb+') as f:
+                    f.write(requests.get(result.url).content)
+        else:
+            print('Failed, status_code: %s, code: %s, message: %s' %
+                (rsp.status_code, rsp.code, rsp.message))
